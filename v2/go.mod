@@ -1,3 +1,3 @@
-module github.com/g8rswimmer/go-twitter/v2
+module github.com/cention-mujibur-rahman/go-twitter/v2
 
 go 1.17
