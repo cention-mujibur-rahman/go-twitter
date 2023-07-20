@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
 # go-twitter
-This is a go library for Twitter v2 API integration.
+This is a go library for Twitter v2 API integration. 
 
 In order to use or demo this library, you need a developer account with twitter.  If you do not have an account, please go [here](https://developer.twitter.com/en).  Please understand that by using this library, you are using under the terms which twitter has defined.
 
@@ -16,12 +16,15 @@ The library is based off of [version 2](https://developer.twitter.com/en/docs/tw
 Version 2 has been released.  This is the current version that will be updated and maintained going forward.  Please refer to the readme [here](./v2)
 
 ```
-go get -u github.com/g8rswimmer/go-twitter/v2
+go get -u github.com/cention-mujibur-rahman/go-twitter/v2
 ```
 
 ## Version 1 [deprecated]
 
 ```
-go get -u github.com/g8rswimmer/go-twitter
+go get -u github.com/cention-mujibur-rahman/go-twitter
 ```
+
+## Note
+I created a fork because of adding support for getting the accessToken and refreshToken etc.
 
