@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -45,15 +47,112 @@ const (
 
 // Client is used to make twitter v2 API callouts.
 //
-// Authorizer is used to add auth to the request
+// # Authorizer is used to add auth to the request
 //
-// Client is the HTTP client to use for all requests
+// # Client is the HTTP client to use for all requests
 //
 // Host is the base URL to use like, https://api.twitter.com
 type Client struct {
 	Authorizer Authorizer
 	Client     *http.Client
 	Host       string
+
+	//Oauth2 support
+	ClientID     string
+	ClientSecret string
+}
+
+// GenerateBearerToken generate bearer token for twitter v2
+func (c *Client) GenerateBearerToken(code, redirectURL string) (*OAuth2TokenResponse, error) {
+	uv := url.Values{}
+	uv.Add("grant_type", "authorization_code")
+	uv.Add("code", code)
+	uv.Add("redirect_uri", redirectURL)
+	uv.Add("code_verifier", "8KxxO-RPl0bLSxX5AWwgdiFbMnry_VOKzFeIlVA7NoA")
+	body := strings.NewReader(uv.Encode())
+
+	o2r := &OAuth2TokenResponse{}
+	req, err := http.NewRequest("POST", OAuth2TokenEndpoint, body)
+	if err != nil {
+		return o2r, err
+	}
+
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetBasicAuth(c.ClientID, c.ClientSecret)
+
+	log.Printf("client=%v", c)
+
+	client := &http.Client{}
+	res, err := client.Do(req)
+	if err != nil {
+		return o2r, err
+	}
+	//var o2r interface{}
+	derr := json.NewDecoder(res.Body).Decode(o2r)
+	if derr != nil {
+		return o2r, err
+	}
+	log.Printf("o2r = %#v", o2r)
+
+	if o2r.AccessToken == "" {
+		return o2r, fmt.Errorf("access_token is empty")
+	}
+
+	if o2r.RefreshToken == "" {
+		return o2r, fmt.Errorf("refresh_token is empty")
+	}
+
+	return o2r, nil
+}
+
+// RefreshAccessToken generate bearer token for twitter v2 by using refresh token
+func (c *Client) RefreshAccessToken(refreshToken string) (token string, err error) {
+	uv := url.Values{}
+	uv.Add("grant_type", "refresh_token")
+	uv.Add("refresh_token", refreshToken)
+	uv.Add("code_verifier", "8KxxO-RPl0bLSxX5AWwgdiFbMnry_VOKzFeIlVA7NoA")
+
+	body := strings.NewReader(uv.Encode())
+	req, err := http.NewRequest("POST", OAuth2TokenEndpoint, body)
+	if err != nil {
+		return "", err
+	}
+
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	//req.Header.Set("Authorization", fmt.Sprintf("%v:%v", ))
+	req.SetBasicAuth(c.ClientID, c.ClientSecret)
+
+	o2r := &OAuth2TokenResponse{}
+
+	client := &http.Client{}
+	res, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	derr := json.NewDecoder(res.Body).Decode(o2r)
+	if derr != nil {
+		panic(derr)
+	}
+	//.Exec(req, &o2r)
+	if err != nil {
+		return "", err
+	}
+	log.Printf("o2r = %#v", o2r)
+	if o2r.AccessToken == "" {
+		return "", fmt.Errorf("access_token is empty")
+	}
+
+	return o2r.AccessToken, nil
+}
+
+// OAuth2TokenEndpoint represents the Oauth2 token URL
+const OAuth2TokenEndpoint = "https://api.twitter.com/2/oauth2/token"
+
+// OAuth2TokenResponse represents Oauth2 token response
+type OAuth2TokenResponse struct {
+	TokenType    string `json:"token_type"`
+	RefreshToken string `json:"refresh_token"`
+	AccessToken  string `json:"access_token"`
 }
 
 // CreateTweet will let a user post polls, quote tweets, tweet with reply setting, tweet with geo, attach
