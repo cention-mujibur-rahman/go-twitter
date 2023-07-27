@@ -38,6 +38,7 @@ const (
 	tweetBookmarksMaxResults                        = 100
 	userTweetTimelineMinResults                     = 5
 	userTweetTimelineMaxResults                     = 100
+	userDMMaxResults                                = 100
 	userMentionTimelineMinResults                   = 5
 	userMentionTimelineMaxResults                   = 100
 	userRetweetLookupMaxResults                     = 100
@@ -60,6 +61,28 @@ type Client struct {
 	//Oauth2 support
 	ClientID     string
 	ClientSecret string
+}
+
+// NewClient takes an user-specific access token and secret and returns a Client struct for that user.
+// The Twitter Client struct can be used for accessing any of the endpoints available.
+func NewClient(clientID, clientSecret string) *Client {
+	return &Client{
+		ClientID:     clientID,
+		ClientSecret: clientSecret,
+		Client:       http.DefaultClient,
+		Host:         "https://api.twitter.com",
+	}
+}
+
+// NewClientWithAuth return client that contains bearer token
+func NewClientWithAuth(accessToken string) *Client {
+	return &Client{
+		Authorizer: AuthorizeReq{
+			Token: accessToken,
+		},
+		Client: http.DefaultClient,
+		Host:   "https://api.twitter.com",
+	}
 }
 
 // GenerateBearerToken generate bearer token for twitter v2
@@ -106,43 +129,42 @@ func (c *Client) GenerateBearerToken(code, redirectURL string) (*OAuth2TokenResp
 }
 
 // RefreshAccessToken generate bearer token for twitter v2 by using refresh token
-func (c *Client) RefreshAccessToken(refreshToken string) (token string, err error) {
+func (c *Client) RefreshAccessToken(refreshToken string) (*OAuth2TokenResponse, error) {
 	uv := url.Values{}
 	uv.Add("grant_type", "refresh_token")
 	uv.Add("refresh_token", refreshToken)
 	uv.Add("code_verifier", "8KxxO-RPl0bLSxX5AWwgdiFbMnry_VOKzFeIlVA7NoA")
 
 	body := strings.NewReader(uv.Encode())
+	o2r := &OAuth2TokenResponse{}
+
 	req, err := http.NewRequest("POST", OAuth2TokenEndpoint, body)
 	if err != nil {
-		return "", err
+		return o2r, err
 	}
 
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	//req.Header.Set("Authorization", fmt.Sprintf("%v:%v", ))
 	req.SetBasicAuth(c.ClientID, c.ClientSecret)
-
-	o2r := &OAuth2TokenResponse{}
 
 	client := &http.Client{}
 	res, err := client.Do(req)
 	if err != nil {
-		return "", err
+		return o2r, err
 	}
 	derr := json.NewDecoder(res.Body).Decode(o2r)
 	if derr != nil {
-		panic(derr)
-	}
-	//.Exec(req, &o2r)
-	if err != nil {
-		return "", err
+		return o2r, derr
 	}
 	log.Printf("o2r = %#v", o2r)
 	if o2r.AccessToken == "" {
-		return "", fmt.Errorf("access_token is empty")
+		return o2r, fmt.Errorf("access_token is empty")
 	}
 
-	return o2r.AccessToken, nil
+	if o2r.RefreshToken == "" {
+		return o2r, fmt.Errorf("refresh_token is empty")
+	}
+
+	return o2r, nil
 }
 
 // OAuth2TokenEndpoint represents the Oauth2 token URL
@@ -153,6 +175,31 @@ type OAuth2TokenResponse struct {
 	TokenType    string `json:"token_type"`
 	RefreshToken string `json:"refresh_token"`
 	AccessToken  string `json:"access_token"`
+	ExpiresIn    int    `json:"expires_in"`
+}
+
+// GetMedia fetch direct messages media
+// mediaURL contained full URL like https://ton.twitter.com/1.1/ton/data/dm/333/444/XXXXXXXX.jpg
+func (c *Client) GetMedia(ctx context.Context, mediaURL string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, mediaURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("tweet lookup request: %w", err)
+	}
+	//req.Header.Add("Accept", "application/json")
+	//c.Authorizer.Add(req)
+	return c.Client.Do(req)
+}
+
+// UploadMedia upload media to twitter
+func (c *Client) UploadMedia(ctx context.Context, baseContent string) (*http.Response, error) {
+	body := strings.NewReader(`{"media_data": ` + baseContent + `}`)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, UploadBaseURL+"/media/upload.json", body)
+	if err != nil {
+		return nil, fmt.Errorf("upload media request: %w", err)
+	}
+	//req.Header.Add("Accept", "application/json")
+	//c.Authorizer.Add(req)
+	return c.Client.Do(req)
 }
 
 // CreateTweet will let a user post polls, quote tweets, tweet with reply setting, tweet with geo, attach
@@ -167,6 +214,7 @@ func (c *Client) CreateTweet(ctx context.Context, tweet CreateTweetRequest) (*Cr
 	}
 	ep := tweetCreateEndpoint.url(c.Host)
 
+	log.Printf("Body - %v", string(body))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, ep, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("create tweet request: %w", err)
@@ -4374,4 +4422,269 @@ func (c *Client) RemoveTweetBookmark(ctx context.Context, userID, tweetID string
 	respBody.RateLimit = rl
 
 	return respBody, nil
+}
+
+// DirectMessageLookup Returns a list of Direct Messages for the authenticated user,
+// both sent and received. Direct Message events are returned in reverse chronological order.
+// Supports retrieving events from the previous 30 days
+func (c *Client) DirectMessageLookup(ctx context.Context, opts UserDMOpts) (*DirectMessageResponse, error) {
+	switch {
+	case opts.MaxResults == 0:
+	case opts.MaxResults < userDMMaxResults:
+		return nil, fmt.Errorf("direct message lookup: max results [%d] have a min[%d] %w", opts.MaxResults, userDMMaxResults, ErrParameter)
+	case opts.MaxResults > userDMMaxResults:
+		return nil, fmt.Errorf("direct message lookup: max results [%d] have a max[%d] %w", opts.MaxResults, userDMMaxResults, ErrParameter)
+	default:
+	}
+	ep := dmLookupEndpoint.url(c.Host)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ep, nil)
+	if err != nil {
+		return nil, fmt.Errorf("direct message lookup request: %w", err)
+	}
+	req.Header.Add("Accept", "application/json")
+	c.Authorizer.Add(req)
+	opts.addQuery(req)
+	resp, err := c.Client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("direct message lookup response: %w", err)
+	}
+	defer resp.Body.Close()
+
+	rl := rateFromHeader(resp.Header)
+
+	respBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("direct message lookup response read: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		e := &ErrorResponse{}
+		if err := json.Unmarshal(respBytes, e); err != nil {
+			return nil, &HTTPError{
+				Status:     resp.Status,
+				StatusCode: resp.StatusCode,
+				URL:        resp.Request.URL.String(),
+				RateLimit:  rl,
+			}
+		}
+		e.StatusCode = resp.StatusCode
+		e.RateLimit = rl
+		return nil, e
+	}
+
+	dmr := &DirectMessageResponse{
+		Raw:       &DMRaw{},
+		RateLimit: &RateLimit{},
+	}
+	//log.Printf("respBytes = %v", string(respBytes))
+	if err := json.Unmarshal(respBytes, dmr.Raw); err != nil {
+		return nil, &ResponseDecodeError{
+			Name:      "direct message lookup",
+			Err:       err,
+			RateLimit: rl,
+		}
+	}
+	//log.Printf("dmr = %#v", dmr.Raw)
+	if err := json.Unmarshal(respBytes, dmr); err != nil {
+		return nil, &ResponseDecodeError{
+			Name:      "direct message lookup",
+			Err:       err,
+			RateLimit: rl,
+		}
+	}
+	dmr.RateLimit = rl
+	return dmr, nil
+}
+
+// DirectMessageByUser Returns a list of Direct Messages (DM) events within a 1-1 conversation with the user specified in the participant_id path parameter. Messages are returned in reverse chronological order.
+func (c *Client) DirectMessageByUser(ctx context.Context, userID string, opts UserDMOpts) (*DirectMessageResponse, error) {
+	switch {
+	case opts.MaxResults == 0:
+	case opts.MaxResults < userDMMaxResults:
+		return nil, fmt.Errorf("direct message lookup: max results [%d] have a min[%d] %w", opts.MaxResults, userDMMaxResults, ErrParameter)
+	case opts.MaxResults > userDMMaxResults:
+		return nil, fmt.Errorf("direct message lookup: max results [%d] have a max[%d] %w", opts.MaxResults, userDMMaxResults, ErrParameter)
+	default:
+	}
+	ep := userDMEndpoint.urlID(c.Host, userID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ep, nil)
+	if err != nil {
+		return nil, fmt.Errorf("direct message lookup request: %w", err)
+	}
+	req.Header.Add("Accept", "application/json")
+	c.Authorizer.Add(req)
+	opts.addQuery(req)
+	resp, err := c.Client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("direct message lookup response: %w", err)
+	}
+	defer resp.Body.Close()
+
+	rl := rateFromHeader(resp.Header)
+
+	respBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("direct message lookup response read: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		e := &ErrorResponse{}
+		if err := json.Unmarshal(respBytes, e); err != nil {
+			return nil, &HTTPError{
+				Status:     resp.Status,
+				StatusCode: resp.StatusCode,
+				URL:        resp.Request.URL.String(),
+				RateLimit:  rl,
+			}
+		}
+		e.StatusCode = resp.StatusCode
+		e.RateLimit = rl
+		return nil, e
+	}
+
+	dmr := &DirectMessageResponse{
+		Raw:       &DMRaw{},
+		RateLimit: &RateLimit{},
+	}
+	//log.Printf("respBytes = %v", string(respBytes))
+	if err := json.Unmarshal(respBytes, dmr.Raw); err != nil {
+		return nil, &ResponseDecodeError{
+			Name:      "direct message lookup",
+			Err:       err,
+			RateLimit: rl,
+		}
+	}
+	//log.Printf("dmr = %#v", dmr.Raw)
+	if err := json.Unmarshal(respBytes, dmr); err != nil {
+		return nil, &ResponseDecodeError{
+			Name:      "direct message lookup",
+			Err:       err,
+			RateLimit: rl,
+		}
+	}
+	dmr.RateLimit = rl
+	return dmr, nil
+}
+
+// DirectMessageByConversation Returns a list of Direct Messages within a conversation specified in the dm_conversation_id path parameter. Messages are returned in reverse chronological order.
+func (c *Client) DirectMessageByConversation(ctx context.Context, convID string, opts UserDMOpts) (*DirectMessageResponse, error) {
+	switch {
+	case opts.MaxResults == 0:
+	case opts.MaxResults < userDMMaxResults:
+		return nil, fmt.Errorf("direct message lookup: max results [%d] have a min[%d] %w", opts.MaxResults, userDMMaxResults, ErrParameter)
+	case opts.MaxResults > userDMMaxResults:
+		return nil, fmt.Errorf("direct message lookup: max results [%d] have a max[%d] %w", opts.MaxResults, userDMMaxResults, ErrParameter)
+	default:
+	}
+	ep := convDMEndpoint.urlID(c.Host, convID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ep, nil)
+	if err != nil {
+		return nil, fmt.Errorf("direct message lookup request: %w", err)
+	}
+	req.Header.Add("Accept", "application/json")
+	c.Authorizer.Add(req)
+	opts.addQuery(req)
+	resp, err := c.Client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("direct message lookup response: %w", err)
+	}
+	defer resp.Body.Close()
+
+	rl := rateFromHeader(resp.Header)
+
+	respBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("direct message lookup response read: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		e := &ErrorResponse{}
+		if err := json.Unmarshal(respBytes, e); err != nil {
+			return nil, &HTTPError{
+				Status:     resp.Status,
+				StatusCode: resp.StatusCode,
+				URL:        resp.Request.URL.String(),
+				RateLimit:  rl,
+			}
+		}
+		e.StatusCode = resp.StatusCode
+		e.RateLimit = rl
+		return nil, e
+	}
+
+	dmr := &DirectMessageResponse{
+		Raw:       &DMRaw{},
+		RateLimit: &RateLimit{},
+	}
+	//log.Printf("respBytes = %v", string(respBytes))
+	if err := json.Unmarshal(respBytes, dmr.Raw); err != nil {
+		return nil, &ResponseDecodeError{
+			Name:      "direct message lookup",
+			Err:       err,
+			RateLimit: rl,
+		}
+	}
+	//log.Printf("dmr = %#v", dmr.Raw)
+	if err := json.Unmarshal(respBytes, dmr); err != nil {
+		return nil, &ResponseDecodeError{
+			Name:      "direct message lookup",
+			Err:       err,
+			RateLimit: rl,
+		}
+	}
+	dmr.RateLimit = rl
+	return dmr, nil
+}
+
+// CreateDirectMessage Creates a one-to-one Direct Message and adds it to the
+// one-to-one conversation. This method either creates a new one-to-one conversation
+// or retrieves the current conversation and adds the Direct Message to it.
+func (c *Client) CreateDirectMessage(ctx context.Context, senderID string, jsonByte []byte) (*CreateDirectMessageResponse, error) {
+	bodyReader := bytes.NewReader(jsonByte)
+	ep := createDMEndpoint.url(c.Host)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, ep, bodyReader)
+	if err != nil {
+		return nil, fmt.Errorf("direct message create request: %w", err)
+	}
+	req.Header.Add("Accept", "application/json")
+	c.Authorizer.Add(req)
+	resp, err := c.Client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("direct message create response: %w", err)
+	}
+	defer resp.Body.Close()
+
+	rl := rateFromHeader(resp.Header)
+
+	respBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("direct message create response read: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		e := &ErrorResponse{}
+		if err := json.Unmarshal(respBytes, e); err != nil {
+			return nil, &HTTPError{
+				Status:     resp.Status,
+				StatusCode: resp.StatusCode,
+				URL:        resp.Request.URL.String(),
+				RateLimit:  rl,
+			}
+		}
+		e.StatusCode = resp.StatusCode
+		e.RateLimit = rl
+		return nil, e
+	}
+
+	dmr := &CreateDirectMessageResponse{}
+	//log.Printf("dmr = %#v", dmr)
+	if err := json.Unmarshal(respBytes, dmr); err != nil {
+		return nil, &ResponseDecodeError{
+			Name:      "direct message create",
+			Err:       err,
+			RateLimit: rl,
+		}
+	}
+	dmr.RateLimit = rl
+	return dmr, nil
 }

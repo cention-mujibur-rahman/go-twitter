@@ -57,6 +57,11 @@ type MediaObj struct {
 	Variants         []*MediaVariantObj `json:"variants,omitempty"`
 }
 
+// Media for sending answer
+type Media struct {
+	RawData string `json:"media_data"`
+}
+
 // MediaMetricsObj engagement metrics for the media content at the time of the request
 type MediaMetricsObj struct {
 	Playback0   int `json:"playback_0_count"`

@@ -10,12 +10,12 @@ type Authorizer interface {
 	Add(req *http.Request)
 }
 
-// AuthorizeReq is the global request token struct
+// AuthorizeReq is the global request token struct.
 type AuthorizeReq struct {
 	Token string
 }
 
-// Add adds the bearer token to the request
+// Add adds the bearer token to the request, it will help to set token from caller place
 func (a AuthorizeReq) Add(req *http.Request) {
 	req.Header.Add("Authorization", fmt.Sprintf("Bearer %s", a.Token))
 }

@@ -54,7 +54,20 @@ const (
 	quoteTweetLookupEndpoint                      endpoint = "2/tweets/{id}/quote_tweets"
 	tweetBookmarksEndpoint                        endpoint = "2/users/{id}/bookmarks"
 
+	//DM fetch
+	dmLookupEndpoint endpoint = "2/dm_events"
+	userDMEndpoint   endpoint = "2/dm_conversations/with/{id}/dm_events"
+	convDMEndpoint   endpoint = "/2/dm_conversations/{id}/dm_events"
+
+	//DM create
+	createDMEndpoint endpoint = "2/dm_conversations/with/{id}/messages"
+
 	idTag = "{id}"
+)
+
+var (
+	//UploadBaseURL ...
+	UploadBaseURL = "https://upload.twitter.com/1.1"
 )
 
 func (e endpoint) url(host string) string {
