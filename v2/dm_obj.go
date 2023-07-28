@@ -50,3 +50,14 @@ type CreateDirectMessageResponse struct {
 	} `json:"data"`
 	RateLimit *RateLimit
 }
+
+// DirectMessage represnts the structure of send firect message
+type DirectMessage struct {
+	Text        string         `json:"text"`
+	Attachments *DMAttachments `json:"attachments,omitempty"`
+}
+
+// DMAttachments attachments
+type DMAttachments struct {
+	MediaIDs []string `json:"media_id"`
+}

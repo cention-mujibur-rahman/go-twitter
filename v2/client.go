@@ -4639,14 +4639,17 @@ func (c *Client) DirectMessageByConversation(ctx context.Context, convID string,
 // CreateDirectMessage Creates a one-to-one Direct Message and adds it to the
 // one-to-one conversation. This method either creates a new one-to-one conversation
 // or retrieves the current conversation and adds the Direct Message to it.
-func (c *Client) CreateDirectMessage(ctx context.Context, senderID string, jsonByte []byte) (*CreateDirectMessageResponse, error) {
-	bodyReader := bytes.NewReader(jsonByte)
-	ep := createDMEndpoint.url(c.Host)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, ep, bodyReader)
+func (c *Client) CreateDirectMessage(ctx context.Context, senderID string, dm *DirectMessage) (*CreateDirectMessageResponse, error) {
+	body, err := json.Marshal(dm)
+	if err != nil {
+		return nil, fmt.Errorf("create dm marshal error %w", err)
+	}
+	ep := createDMEndpoint.urlID(c.Host, senderID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, ep, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("direct message create request: %w", err)
 	}
-	req.Header.Add("Accept", "application/json")
+	req.Header.Add("Content-Type", "application/json")
 	c.Authorizer.Add(req)
 	resp, err := c.Client.Do(req)
 	if err != nil {
@@ -4661,7 +4664,7 @@ func (c *Client) CreateDirectMessage(ctx context.Context, senderID string, jsonB
 		return nil, fmt.Errorf("direct message create response read: %w", err)
 	}
 
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusCreated {
 		e := &ErrorResponse{}
 		if err := json.Unmarshal(respBytes, e); err != nil {
 			return nil, &HTTPError{
@@ -4677,7 +4680,6 @@ func (c *Client) CreateDirectMessage(ctx context.Context, senderID string, jsonB
 	}
 
 	dmr := &CreateDirectMessageResponse{}
-	//log.Printf("dmr = %#v", dmr)
 	if err := json.Unmarshal(respBytes, dmr); err != nil {
 		return nil, &ResponseDecodeError{
 			Name:      "direct message create",
@@ -4685,6 +4687,7 @@ func (c *Client) CreateDirectMessage(ctx context.Context, senderID string, jsonB
 			RateLimit: rl,
 		}
 	}
+	//log.Printf("dmr = %#v", dmr)
 	dmr.RateLimit = rl
 	return dmr, nil
 }
